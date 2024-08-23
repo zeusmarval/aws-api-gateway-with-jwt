@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Stack api gateway with jwt
+        
+Resources:
+
+  SecretManagerJWT:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Secret key de JWT
+      GenerateSecretString:
+        SecretStringTemplate: '{"secretKey":""}'
+        GenerateStringKey: "secretKey"
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\\'
+  
+  JwtAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      # FunctionName: !Sub ${AWS::StackName}-jwtAuthorizerFunction
+      CodeUri: src/lambdas/jwtAuthorizer
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          SECRET_ID: !Ref secretManagerJWT
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref secretManagerJWT
+
+  ApiServices:
+    Type: AWS::Serverless::Api
+    Properties: 
+      Name: !Sub ${AWS::StackName}-API
+      StageName: v1
+      Cors: 
+        AllowMethods: "'OPTIONS,GET,POST,PUT,DELETE'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key, Access-Control-Allow-Origin'"
+        AllowOrigin: "'*'"
+      Auth:
+        DefaultAuthorizer: LambdaAuthorizer
+        AddDefaultAuthorizerToCorsPreflight: False
+        Authorizers:
+          LambdaAuthorizer:
+            FunctionPayloadType: TOKEN
+            FunctionArn: !GetAtt jwtAuthorizerFunction.Arn
+            Identity:
+              Headers:
+                - authorization
+              ReauthorizeEvery: 0
+
+  TokenGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      # FunctionName: !Sub ${AWS::StackName}-tokenGenerator
+      CodeUri: src/lambdas/tokenGenerator
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          SECRET_ID: !Ref secretManagerJWT
+          DAYS: 7
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref secretManagerJWT
+      Events:
+        TokenGenerator:
+          Type: Api
+          Properties:
+            Path: /token
+            Method: post
+            RestApiId: !Ref apiServices
+            Auth:  # Disable authorizer for endpoint
+              Authorizer: NONE
+
+
+ 
