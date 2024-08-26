@@ -10,7 +10,7 @@ SECRET_ARN = os.environ['SECRET_ID']
 EXPIRATION_DAYS = int(os.environ['DAYS'])
 
 # Load only the needed secret value during cold start
-secret_key_value = json.loads(getSecret(region=REGION, secret_manager_arn=SECRET_ARN))['secretkey']
+secret_key_value = json.loads(getSecret(region=REGION, secret_manager_arn=SECRET_ARN))['secretKey']
 expiration_duration = timedelta(days=EXPIRATION_DAYS)
 
 def lambda_handler(event, context):

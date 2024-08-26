@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Stack api gateway with jwt
-        
+
 Resources:
 
   SecretManagerJWT:
@@ -23,13 +23,13 @@ Resources:
       Handler: app.lambda_handler
       Environment:
         Variables:
-          SECRET_ID: !Ref secretManagerJWT
+          SECRET_ID: !Ref SecretManagerJWT
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
-              Resource: !Ref secretManagerJWT
+              Resource: !Ref SecretManagerJWT
 
   ApiServices:
     Type: AWS::Serverless::Api
@@ -46,7 +46,7 @@ Resources:
         Authorizers:
           LambdaAuthorizer:
             FunctionPayloadType: TOKEN
-            FunctionArn: !GetAtt jwtAuthorizerFunction.Arn
+            FunctionArn: !GetAtt JwtAuthorizerFunction.Arn
             Identity:
               Headers:
                 - authorization
@@ -61,23 +61,35 @@ Resources:
       Handler: app.lambda_handler
       Environment:
         Variables:
-          SECRET_ID: !Ref secretManagerJWT
+          SECRET_ID: !Ref SecretManagerJWT
           DAYS: 7
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
-              Resource: !Ref secretManagerJWT
+              Resource: !Ref SecretManagerJWT
       Events:
         TokenGenerator:
           Type: Api
           Properties:
             Path: /token
             Method: post
-            RestApiId: !Ref apiServices
+            RestApiId: !Ref ApiServices
             Auth:  # Disable authorizer for endpoint
               Authorizer: NONE
-
-
- 
+  
+  LambdaTestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      # FunctionName: !Sub ${AWS::StackName}-lambdaTest
+      CodeUri: src/lambdas/lambdaTest
+      Runtime: python3.12
+      Handler: app.lambda_handler
+      Events:
+        LambdaTest:
+          Type: Api
+          Properties:
+            Path: /test
+            Method: post
+            RestApiId: !Ref ApiServices

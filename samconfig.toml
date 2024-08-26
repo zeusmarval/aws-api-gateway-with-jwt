@@ -1,0 +1,8 @@
+version = 0.1
+[dev.deploy.parameters]
+stack_name = "api-with-jwt"
+resolve_s3 = true
+s3_prefix = "api-with-jwt"
+region = "us-west-2"
+capabilities = "CAPABILITY_IAM"
+image_repositories = []
