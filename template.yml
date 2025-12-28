@@ -1,13 +1,42 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stack api gateway with jwt
+Description: API - API GATEWAY | Stack para API Gateway REST con autorizacion JWT y funciones Lambda
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+    Description: Environment where the stack will be deployed
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
 
 Resources:
 
-  SecretManagerJWT:
-    Type: AWS::SecretsManager::Secret
+  CommonLibsLayer:
+    Type: AWS::Serverless::LayerVersion
     Properties:
-      Description: Secret key de JWT
+      LayerName: !Sub ${AWS::StackName}-common-libs
+      Description: API - COMMON LIBS | Capa comun con logger y secretManager para funciones Lambda
+      ContentUri: src/layers/common-libs/
+      CompatibleRuntimes:
+        - python3.13
+      LicenseInfo: MIT
+      RetentionPolicy: Retain
+    Metadata:
+      BuildMethod: python3.13
+
+
+  JwtSecret:
+    Type: AWS::SecretsManager::Secret
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub ${AWS::StackName}-jwt-secret
+      Description: API - JWT SECRET | Secret key para generacion y validacion de tokens JWT
       GenerateSecretString:
         SecretStringTemplate: '{"secretKey":""}'
         GenerateStringKey: "secretKey"
@@ -17,25 +46,39 @@ Resources:
   JwtAuthorizerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      # FunctionName: !Sub ${AWS::StackName}-jwtAuthorizerFunction
+      FunctionName: !Sub ${AWS::StackName}-jwt-authorizer
+      Description: API - JWT AUTHORIZER | Autorizador Lambda para validar tokens JWT en API Gateway
       CodeUri: src/lambdas/jwtAuthorizer
-      Runtime: python3.12
+      Runtime: python3.13
       Handler: app.lambda_handler
+      Timeout: 25
+      Layers:
+        - !Ref CommonLibsLayer
       Environment:
         Variables:
-          SECRET_ID: !Ref SecretManagerJWT
+          SECRET_ID: !Ref JwtSecret
+          SECRET_CACHE_TTL_SECONDS: 900
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
-              Resource: !Ref SecretManagerJWT
+              Resource: !Ref JwtSecret
+
+  JwtAuthorizerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${JwtAuthorizerFunction}
+      RetentionInDays: !If [IsProd, 7, 1]
 
   ApiServices:
     Type: AWS::Serverless::Api
     Properties: 
-      Name: !Sub ${AWS::StackName}-API
+      Name: !Sub ${AWS::StackName}-api
+      Description: API - API GATEWAY | API Gateway REST con autorizacion JWT
       StageName: v1
+      EndpointConfiguration:
+        Type: EDGE
       Cors: 
         AllowMethods: "'OPTIONS,GET,POST,PUT,DELETE'"
         AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key, Access-Control-Allow-Origin'"
@@ -55,20 +98,25 @@ Resources:
   TokenGeneratorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      # FunctionName: !Sub ${AWS::StackName}-tokenGenerator
+      FunctionName: !Sub ${AWS::StackName}-token-generator
+      Description: API - TOKEN GENERATOR | Funcion Lambda para generar tokens JWT
       CodeUri: src/lambdas/tokenGenerator
-      Runtime: python3.12
+      Runtime: python3.13
       Handler: app.lambda_handler
+      Timeout: 25
+      Layers:
+        - !Ref CommonLibsLayer
       Environment:
         Variables:
-          SECRET_ID: !Ref SecretManagerJWT
+          SECRET_ID: !Ref JwtSecret
           DAYS: 7
+          SECRET_CACHE_TTL_SECONDS: 900
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
-              Resource: !Ref SecretManagerJWT
+              Resource: !Ref JwtSecret
       Events:
         TokenGenerator:
           Type: Api
@@ -76,16 +124,26 @@ Resources:
             Path: /token
             Method: post
             RestApiId: !Ref ApiServices
-            Auth:  # Disable authorizer for endpoint
+            Auth:
               Authorizer: NONE
   
+  TokenGeneratorFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${TokenGeneratorFunction}
+      RetentionInDays: !If [IsProd, 7, 1]
+
   LambdaTestFunction:
     Type: AWS::Serverless::Function
     Properties:
-      # FunctionName: !Sub ${AWS::StackName}-lambdaTest
+      FunctionName: !Sub ${AWS::StackName}-lambda-test
+      Description: API - LAMBDA TEST | Funcion Lambda de prueba para validar endpoints protegidos
       CodeUri: src/lambdas/lambdaTest
-      Runtime: python3.12
+      Runtime: python3.13
       Handler: app.lambda_handler
+      Timeout: 25
+      Layers:
+        - !Ref CommonLibsLayer
       Events:
         LambdaTest:
           Type: Api
@@ -93,3 +151,9 @@ Resources:
             Path: /test
             Method: post
             RestApiId: !Ref ApiServices
+
+  LambdaTestFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${LambdaTestFunction}
+      RetentionInDays: !If [IsProd, 7, 1]

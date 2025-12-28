@@ -1,0 +1,21 @@
+version = 0.1
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+stack_name = "dev-api-jwt"
+resolve_s3 = true
+s3_prefix = "dev-api-jwt"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "Environment=\"dev\""
+image_repositories = []
+tags = [
+    "author=zama",
+    "Resources=api-test"
+]
+
+
+[default.global.parameters]
+region = "us-east-1"

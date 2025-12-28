@@ -1,18 +1,13 @@
 import os
 import json
 from jose import jwt, JWTError
-from secretManager import getSecret
+from common_libs.logger import logger
+from common_libs.secretManager import get_secret
+from datetime import datetime
 
-# Preload the secret key during cold start
-try:
-    # Load the secret once and store it for subsequent invocations
-    secret_key = json.loads(getSecret(region=os.environ['AWS_REGION'], secret_manager_arn=os.environ['SECRET_ID']))['secretKey']
-except Exception as e:
-    # Handle any errors that occur during the loading of the secret
-    secret_key = None
-    error_loading_secret = f"Error loading secret: {e}"
-else:
-    error_loading_secret = None
+# Cache environment variables during cold start
+REGION = os.environ.get('AWS_REGION', 'us-east-1')
+SECRET_ARN = os.environ.get('SECRET_ID')
 
 # Predefine the basic policy structure function
 def generate_policy(principal_id, effect, method_arn, error_message=None):
@@ -40,38 +35,69 @@ def generate_policy(principal_id, effect, method_arn, error_message=None):
     return policy
 
 def lambda_handler(event, context):
+    start_time = datetime.utcnow()
+    
     # Default principal ID if no valid token is found
     principal_id = '0000'
+    method_arn = event.get('methodArn', '')
     
-    # Check if there was an error loading the secret key
-    if error_loading_secret:
-        print(error_loading_secret)
-        return generate_policy(principal_id, 'Deny', event['methodArn'], error_loading_secret)
+    logger.info("JWT authorization request received", {
+        "methodArn": method_arn
+    })
+    
+    # Validate configuration
+    if not SECRET_ARN:
+        logger.error("SECRET_ID environment variable is not configured", None, {
+            "region": REGION
+        })
+        return generate_policy(principal_id, 'Deny', method_arn, 'Internal configuration error')
     
     # Extract the JWT token from the event
     token = event.get('authorizationToken')
     if not token:
-        error_message = "Missing authorization token."
-        print(error_message)
-        return generate_policy(principal_id, 'Deny', event['methodArn'], error_message)
+        error_message = "Missing authorization token"
+        logger.warn("Authorization token missing", {
+            "methodArn": method_arn
+        })
+        return generate_policy(principal_id, 'Deny', method_arn, error_message)
 
     try:
-        # Validate the JWT using the preloaded secret key
+        # Get secret with caching (TTL configured via SECRET_CACHE_TTL_SECONDS env var)
+        secret_data = get_secret(region=REGION, secret_manager_arn=SECRET_ARN)
+        secret_key = json.loads(secret_data)['secretKey']
+        
+        # Validate the JWT using the secret key
         payload = jwt.decode(token, secret_key, algorithms=['HS256'])
         # If validation is successful, set the principal ID and allow access
         principal_id = payload.get('sub', principal_id)
+        username = payload.get('username', 'unknown')
         effect = 'Allow'
         error_message = None
+        
+        duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+        
+        logger.info("JWT token validated successfully", {
+            "principalId": principal_id,
+            "username": username,
+            "effect": effect,
+            "durationMs": duration_ms
+        })
+        
     except JWTError as e:
         # Handle JWT errors and deny access
-        error_message = f"Error validating JWT: {e}"
-        print(error_message)
+        error_message = f"Invalid or expired JWT token"
+        logger.warn("JWT validation failed", {
+            "error": str(e),
+            "methodArn": method_arn
+        })
         effect = 'Deny'
     except Exception as e:
         # Handle any other exceptions and deny access
-        error_message = f"Error: {e}"
-        print(error_message)
+        error_message = f"Error processing authorization request"
+        logger.error("Unexpected error during JWT validation", e, {
+            "methodArn": method_arn
+        })
         effect = 'Deny'
 
     # Generate and return the policy based on the result
-    return generate_policy(principal_id, effect, event['methodArn'], error_message)
+    return generate_policy(principal_id, effect, method_arn, error_message)
